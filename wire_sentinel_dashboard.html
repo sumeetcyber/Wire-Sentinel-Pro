@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Wire Sentinel Pro</title>
+
+<style>
+:root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --accent: #39d0d8;
+    --danger: #f85149;
+}
+
+body {
+    margin:0;
+    font-family: monospace;
+    background: var(--bg);
+    color: var(--text);
+}
+
+header {
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:15px;
+    background: var(--panel);
+    border-bottom:1px solid var(--border);
+}
+
+h1 {
+    margin:0;
+    color: var(--accent);
+}
+
+#clock {
+    font-size:14px;
+}
+
+.container {
+    display:grid;
+    grid-template-columns: 3fr 1fr;
+    gap:10px;
+    padding:10px;
+}
+
+.panel {
+    background: var(--panel);
+    border:1px solid var(--border);
+    padding:10px;
+    overflow:auto;
+}
+
+.new-entry {
+    animation: flash 0.5s ease;
+}
+
+@keyframes flash {
+    from { background-color: rgba(57,208,216,0.6); }
+    to { background-color: inherit; }
+}
+
+table {
+    width:100%;
+    border-collapse:collapse;
+    font-size:12px;
+}
+
+th, td {
+    padding:6px;
+    border-bottom:1px solid var(--border);
+}
+
+th {
+    background: var(--panel);
+}
+
+tr:hover {
+    background:#21262d;
+}
+
+.suspicious {
+    background: rgba(248,81,73,0.15);
+}
+
+select, input, button {
+    background: var(--panel);
+    color: var(--text);
+    border:1px solid var(--border);
+    padding:5px;
+    margin:3px 0;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+<div>
+<h1>Wire Sentinel Pro</h1>
+</div>
+<div>
+<span id="clock"></span>
+</div>
+</header>
+
+<div style="padding:10px;">
+Theme:
+<select onchange="setTheme(this.value)">
+<option value="amoled">AMOLED</option>
+<option value="cream">Cream</option>
+<option value="chocolate">Chocolate</option>
+<option value="mint">Mint</option>
+<option value="raspberry">Raspberry</option>
+</select>
+</div>
+
+<div class="container">
+
+<div class="panel">
+<h3>Incoming Traffic</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Time</th>
+<th>Source</th>
+<th>Destination</th>
+<th>Protocol</th>
+<th>Len</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody id="tbody">
+<tr><td colspan="7">Waiting for packets...</td></tr>
+</tbody>
+</table>
+</div>
+
+<div>
+
+<div class="panel">
+<h3>Top Destinations</h3>
+<ul id="topDest"></ul>
+</div>
+
+<div class="panel">
+<h3>Top Sources</h3>
+<ul id="topSrc"></ul>
+</div>
+
+<div class="panel">
+<h3>Export Logs</h3>
+<p style="font-size:11px;">
+⚠ Time must be specified in the log save menu (start → end).  
+If not defined, no logs will be saved.
+</p>
+Start (ISO format):<br>
+<input id="startTime" placeholder="2025-01-01T00:00:00"><br>
+End (ISO format):<br>
+<input id="endTime" placeholder="2025-01-01T23:59:59"><br>
+<button onclick="exportLogs()">Export JSON</button>
+<div id="exportResult"></div>
+</div>
+
+<div class="panel">
+<h3>File Analyzer</h3>
+<input id="filePath" placeholder="/path/to/file"><br>
+<button onclick="analyzeFile()">Analyze</button>
+<pre id="fileResult"></pre>
+</div>
+
+</div>
+</div>
+
+<script>
+let packets = [];
+let lastTopTimestamp = null;
+
+function updateClock(){
+    const now = new Date();
+    const time = now.toLocaleTimeString('en-GB', { hour12:false });
+    document.getElementById("clock").textContent = time;
+}
+setInterval(updateClock,1000);
+updateClock();
+
+async function fetchPackets(){
+    const res = await fetch("/api/live_packets");
+    const data = await res.json();
+
+    // Detect new packet
+    if(data.length > 0 && data[0].timestamp !== lastTopTimestamp){
+        blinkIndicator();
+        lastTopTimestamp = data[0].timestamp;
+    }
+
+    packets = data; // newest already first from backend
+    renderPackets();
+}
+
+async function fetchTop(){
+    const d = await fetch("/api/top_destinations");
+    const s = await fetch("/api/top_sources");
+
+    const dest = await d.json();
+    const src = await s.json();
+
+    document.getElementById("topDest").innerHTML =
+        dest.map(x=>`<li>${x[0]} (${x[1]})</li>`).join("");
+
+    document.getElementById("topSrc").innerHTML =
+        src.map(x=>`<li>${x[0]} (${x[1]})</li>`).join("");
+}
+
+function renderPackets(){
+    const tbody = document.getElementById("tbody");
+
+    if(packets.length === 0){
+        tbody.innerHTML = "<tr><td colspan='7'>No packets</td></tr>";
+        return;
+    }
+
+    tbody.innerHTML = packets.map((p,i)=>`
+        <tr class="${p.suspicious?'suspicious':''} ${i===0?'new-entry':''}">
+            <td>${i}</td>
+            <td>${p.timestamp.split('T')[1].split('.')[0]}</td>
+            <td>${p.source}</td>
+            <td>${p.destination}</td>
+            <td>${p.protocol}</td>
+            <td>${p.length}</td>
+            <td>${p.suspicious?'⚠':'✓'}</td>
+        </tr>
+    `).join("");
+}
+
+function blinkIndicator(){
+    const header = document.querySelector("header");
+    header.style.boxShadow = "0 0 20px 5px rgba(57,208,216,0.8)";
+    setTimeout(()=>{
+        header.style.boxShadow = "none";
+    },300);
+}
+
+async function exportLogs(){
+    const start = document.getElementById("startTime").value;
+    const end = document.getElementById("endTime").value;
+
+    const res = await fetch("/api/export_logs", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ start:start, end:end })
+    });
+
+    const data = await res.json();
+    document.getElementById("exportResult").textContent =
+        JSON.stringify(data,null,2);
+}
+
+async function analyzeFile(){
+    const path = document.getElementById("filePath").value;
+    const res = await fetch("/api/analyze_file?path="+encodeURIComponent(path));
+    const data = await res.json();
+    document.getElementById("fileResult").textContent =
+        JSON.stringify(data,null,2);
+}
+
+function setTheme(theme){
+    const root = document.documentElement;
+
+    if(theme==="amoled"){
+        root.style.setProperty("--bg","#000000");
+        root.style.setProperty("--panel","#111111");
+        root.style.setProperty("--text","#ffffff");
+    }
+    if(theme==="cream"){
+        root.style.setProperty("--bg","#f4f1ea");
+        root.style.setProperty("--panel","#ffffff");
+        root.style.setProperty("--text","#2e2e2e");
+    }
+    if(theme==="chocolate"){
+        root.style.setProperty("--bg","#2b1d16");
+        root.style.setProperty("--panel","#3b2a21");
+        root.style.setProperty("--text","#f5e6d3");
+    }
+    if(theme==="mint"){
+        root.style.setProperty("--bg","#e8fff5");
+        root.style.setProperty("--panel","#ffffff");
+        root.style.setProperty("--text","#003d2e");
+    }
+    if(theme==="raspberry"){
+        root.style.setProperty("--bg","#2b0a1a");
+        root.style.setProperty("--panel","#3d1026");
+        root.style.setProperty("--text","#ffd6e8");
+    }
+}
+
+setInterval(fetchPackets,1000);
+setInterval(fetchTop,3000);
+fetchPackets();
+fetchTop();
+</script>
+
+</body>
+</html>
